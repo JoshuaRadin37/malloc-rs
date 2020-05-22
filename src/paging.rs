@@ -32,7 +32,7 @@ extern {
 
 use memmap;
 use core::convert::TryInto;
-use memmap::MmapMut;
+use memmap::{MmapMut, MmapOptions};
 use core::ops::{Deref, DerefMut, Index, IndexMut};
 use alloc::sync::Arc;
 use core::alloc::Layout;
@@ -50,6 +50,7 @@ struct Heap {
 
 pub const PAGE_SIZE: usize = 4096;
 
+static GLOBAL_ALLOC: Mutex<()>= Mutex::new(());
 
 pub struct Page{
     map: MmapMut,
@@ -79,11 +80,16 @@ impl Page {
     pub fn can_fit(&self, layout: Layout) -> bool {
         layout.size() <= (self.len() - self.used)
     }
+
+    pub fn usage(&self) -> f64 {
+        self.used() as f64 / self.len() as f64
+    }
 }
 
 pub struct Pager {
     static_page: Option<Page>,
     use_dynamic: bool,
+    auto_expanding: bool,
     dynamic_pages: LinkedList<Page>
 }
 
@@ -95,6 +101,7 @@ impl Pager {
         Self {
             static_page: None,
             use_dynamic: false,
+            auto_expanding: false,
             dynamic_pages: LinkedList::new()
         }
     }
@@ -109,8 +116,33 @@ impl Pager {
 
     }
 
+    pub fn is_auto_expanding(&self) -> bool {
+        self.auto_expanding
+    }
+
+    pub fn set_is_auto_expanding(&mut self, val: bool) {
+        self.auto_expanding = val
+    }
+
+    fn get_map(layout: Layout) -> MmapMut {
+        let layout = if layout.size() < PAGE_SIZE {
+            Layout::from_size_align(PAGE_SIZE, PAGE_SIZE).expect("Matches value")
+        } else {
+            let size = layout.size();
+            let divided = size / PAGE_SIZE;
+            let fixed_size = PAGE_SIZE * ((divided + 1) / 2 * 3);
+            Layout::from_size_align(fixed_size, PAGE_SIZE).expect("Matches expectations")
+        };
+
+        MmapOptions::new().len(layout.size()).map_anon().expect("Error creating map")
+    }
+
     pub fn alloc_page(&mut self) -> &mut Page{
        // memmap::MmapOptions::new().stack()
+
+        self.alloc_large(Layout::from_size_align(PAGE_SIZE, PAGE_SIZE)
+            .expect("Matches expectations"))
+            /*
         let mut result = memmap::MmapMut::map_anon(PAGE_SIZE).expect("Can't map anymore memory");
         let page = Page::new(result);
 
@@ -131,13 +163,19 @@ impl Pager {
             }
         }
 
+             */
+
     }
+
+
     pub fn alloc_large(&mut self, mem_size: Layout) -> &mut Page {
-        let mut result = memmap::MmapMut::map_anon(mem_size.size()).expect("Can't map anymore memory");
+        GLOBAL_ALLOC.lock();
+
+        let mut result = Self::get_map(mem_size);
         let page = Page::new(result);
 
         if !self.bootstrapped() {
-            self.bootstrap(MemorySize::Kilobytes(PAGE_SIZE).into())
+            self.bootstrap(PAGE_SIZE.into())
         }
 
         if self.use_dynamic() {

@@ -9,6 +9,7 @@ use core::cell::{RefCell, Cell};
 use core::ops::DerefMut;
 use core::ptr::{null, null_mut};
 use crate::mem_sizes::MemorySize;
+use core::borrow::Borrow;
 
 struct BasicAllocator {
     pager: Cell<Pager>,
@@ -22,18 +23,35 @@ impl BasicAllocator {
         }
     }
 
+    pub fn get_pager(&self) -> &mut Pager {
+        unsafe {&mut *self.pager.as_ptr()}
+    }
+
     pub fn add_page(&self) {
-        // let page = self.pager.alloc_page();
+        self.get_pager().alloc_page();
 
         // self.current_page.replace(Some(page));
     }
 
+    pub fn avg_usage(&self) -> f64{
+        let pager = self.get_pager();
+
+        let mut sum = pager.get_static_page().map_or(0.0,|p| p.usage());
+
+        for page in pager.get_dynamic_pages() {
+            sum += page.usage();
+        }
+
+        sum / (pager.get_dynamic_pages().len() + 1) as f64
+    }
+
     pub fn find_page_with_space(&self, layout: Layout) -> *mut Page {
-        let mut pager = unsafe { &mut  *(self.pager.as_ptr()) };
+        let mut pager = self.get_pager();
+        //let mut pager = unsafe { &mut  *(self.pager.as_ptr()) };
 
         if !pager.bootstrapped() {
             pager.bootstrap(
-                usize::max(layout.size(), MemorySize::Kilobytes(PAGE_SIZE).into())
+                usize::max(layout.size(), PAGE_SIZE)
             );
         }
 
@@ -92,6 +110,11 @@ unsafe impl GlobalAlloc for BasicAllocator {
             }
         */
 
+        if !self.get_pager().is_auto_expanding() && self.avg_usage() > 0.6 {
+            self.get_pager().set_is_auto_expanding(true);
+            self.add_page();
+            self.get_pager().set_is_auto_expanding(false);
+        }
 
         let position = {
             let mut start = page.used();
