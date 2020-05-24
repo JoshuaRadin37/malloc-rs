@@ -1,5 +1,5 @@
 [package]
-name = "tcalloc"
+name = "alloc_rs"
 version = "0.1.0"
 authors = ["Joshua Radin <jradn16@gmail.com>"]
 edition = "2018"

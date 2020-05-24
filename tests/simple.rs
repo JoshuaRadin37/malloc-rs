@@ -1,7 +1,6 @@
 #![no_std]
 
 extern crate alloc;
-extern crate tcalloc;
 
 use alloc::boxed::Box;
 
